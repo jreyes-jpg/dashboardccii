@@ -1,0 +1,495 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import base64
+from io import BytesIO
+
+# Configuración de página
+st.set_page_config(layout="wide", page_title="Dashboard CCII 2025", page_icon="📊")
+
+# Función para calcular positividad (6+7)
+def calc_pos(data):
+    """Calcula el porcentaje de respuestas positivas (notas 6 y 7)"""
+    data_clean = data.dropna()
+    if len(data_clean) == 0:
+        return 0
+    positives = len(data_clean[data_clean.isin([6, 7])])
+    return (positives / len(data_clean)) * 100
+
+# Cargar datos con manejo de errores
+@st.cache_data
+def load_data():
+    try:
+        df = pd.read_csv('Encuesta_CCII_2025.csv', sep=';', encoding='utf-8')
+        return df
+    except FileNotFoundError:
+        st.error("❌ No se encontró el archivo 'Encuesta_CCII_2025.csv'")
+        return None
+    except Exception as e:
+        st.error(f"❌ Error al cargar datos: {str(e)}")
+        return None
+
+# Función para exportar gráficos a HTML
+def create_export_html(df_filtered, perc_gen, cont_vals, can_vals, attr_vals):
+    """Genera HTML para exportar como reporte"""
+    html_content = f"""
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+            h1 {{ color: #0066cc; }}
+            h2 {{ color: #333; border-bottom: 2px solid #0066cc; padding-bottom: 5px; }}
+            .metric {{ background: #f0f8ff; padding: 15px; margin: 10px 0; border-radius: 5px; }}
+            .metric-value {{ font-size: 24px; font-weight: bold; color: #0066cc; }}
+            table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
+            th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+            th {{ background-color: #0066cc; color: white; }}
+            tr:nth-child(even) {{ background-color: #f2f2f2; }}
+        </style>
+    </head>
+    <body>
+        <h1>📊 Reporte de Comunicación Interna 2025</h1>
+        <div class="metric">
+            <strong>Satisfacción General:</strong>
+            <div class="metric-value">{perc_gen:.1f}%</div>
+        </div>
+        <div class="metric">
+            <strong>Total de Respuestas:</strong> {len(df_filtered):,}
+        </div>
+        
+        <h2>Relevancia de Contenidos (% Notas 6-7)</h2>
+        <table>
+            <tr><th>Contenido</th><th>% Positividad</th></tr>
+            <tr><td>Obj. Estratégicos</td><td>{cont_vals[0]:.1f}%</td></tr>
+            <tr><td>Clientes</td><td>{cont_vals[1]:.1f}%</td></tr>
+            <tr><td>Des. Prof.</td><td>{cont_vals[2]:.1f}%</td></tr>
+            <tr><td>Bienestar</td><td>{cont_vals[3]:.1f}%</td></tr>
+            <tr><td>Compromiso</td><td>{cont_vals[4]:.1f}%</td></tr>
+            <tr><td>Colaboración</td><td>{cont_vals[5]:.1f}%</td></tr>
+            <tr><td>Comportamiento</td><td>{cont_vals[6]:.1f}%</td></tr>
+            <tr><td>Orgullo</td><td>{cont_vals[7]:.1f}%</td></tr>
+        </table>
+        
+        <h2>Valoración de Canales (% Notas 6-7)</h2>
+        <table>
+            <tr><th>Canal</th><th>% Positividad</th></tr>
+            <tr><td>Intranet</td><td>{can_vals[0]:.1f}%</td></tr>
+            <tr><td>Correos</td><td>{can_vals[1]:.1f}%</td></tr>
+            <tr><td>Streaming</td><td>{can_vals[2]:.1f}%</td></tr>
+            <tr><td>Teams</td><td>{can_vals[3]:.1f}%</td></tr>
+            <tr><td>Pantallas</td><td>{can_vals[4]:.1f}%</td></tr>
+        </table>
+        
+        <h2>Atributos de Comunicación (% Notas 6-7)</h2>
+        <table>
+            <tr><th>Atributo</th><th>% Positividad</th></tr>
+            <tr><td>Oportunidad</td><td>{attr_vals[0]:.1f}%</td></tr>
+            <tr><td>Utilidad</td><td>{attr_vals[1]:.1f}%</td></tr>
+            <tr><td>Claridad</td><td>{attr_vals[2]:.1f}%</td></tr>
+            <tr><td>Creatividad</td><td>{attr_vals[3]:.1f}%</td></tr>
+            <tr><td>Frecuencia</td><td>{attr_vals[4]:.1f}%</td></tr>
+        </table>
+        
+        <p style="margin-top: 40px; color: #666; font-size: 12px;">
+            Reporte generado automáticamente - Dashboard CCII 2025
+        </p>
+    </body>
+    </html>
+    """
+    return html_content
+
+df = load_data()
+
+if df is not None:
+    # --- SIDEBAR: FILTROS ---
+    st.sidebar.title("🔍 Filtros de Análisis")
+    st.sidebar.markdown("---")
+    
+    # Obtener nombres de columnas demográficas
+    col_edad = df.columns[34] if df.shape[1] > 34 else None
+    col_region = df.columns[35] if df.shape[1] > 35 else None
+    col_division = df.columns[36] if df.shape[1] > 36 else None
+    
+    # Filtro de Edad
+    if col_edad:
+        edades_disponibles = df[col_edad].dropna().unique().tolist()
+        edad_seleccionada = st.sidebar.multiselect(
+            "👤 Filtrar por Edad",
+            options=edades_disponibles,
+            default=edades_disponibles,
+            help="Selecciona uno o más rangos de edad"
+        )
+    else:
+        edad_seleccionada = None
+    
+    # Filtro de Región
+    if col_region:
+        regiones_disponibles = df[col_region].dropna().unique().tolist()
+        region_seleccionada = st.sidebar.multiselect(
+            "📍 Filtrar por Región",
+            options=regiones_disponibles,
+            default=regiones_disponibles,
+            help="Selecciona una o más regiones"
+        )
+    else:
+        region_seleccionada = None
+    
+    # Filtro de División
+    if col_division:
+        divisiones_disponibles = df[col_division].dropna().unique().tolist()
+        division_seleccionada = st.sidebar.multiselect(
+            "🏢 Filtrar por División",
+            options=divisiones_disponibles,
+            default=divisiones_disponibles,
+            help="Selecciona una o más divisiones"
+        )
+    else:
+        division_seleccionada = None
+    
+    st.sidebar.markdown("---")
+    
+    # Modo de análisis comparativo
+    st.sidebar.subheader("📊 Análisis Comparativo")
+    modo_comparativo = st.sidebar.checkbox("Activar comparación por edades", value=False)
+    
+    # Aplicar filtros
+    df_filtered = df.copy()
+    if edad_seleccionada and col_edad:
+        df_filtered = df_filtered[df_filtered[col_edad].isin(edad_seleccionada)]
+    if region_seleccionada and col_region:
+        df_filtered = df_filtered[df_filtered[col_region].isin(region_seleccionada)]
+    if division_seleccionada and col_division:
+        df_filtered = df_filtered[df_filtered[col_division].isin(division_seleccionada)]
+    
+    # --- HEADER: PERCEPCIÓN GENERAL ---
+    st.title("📊 Dashboard de Comunicación Interna 2025")
+    
+    # Mostrar filtros activos
+    filtros_activos = []
+    if edad_seleccionada and len(edad_seleccionada) < len(edades_disponibles):
+        filtros_activos.append(f"Edad: {', '.join(map(str, edad_seleccionada))}")
+    if region_seleccionada and len(region_seleccionada) < len(regiones_disponibles):
+        filtros_activos.append(f"Región: {', '.join(map(str, region_seleccionada))}")
+    if division_seleccionada and len(division_seleccionada) < len(divisiones_disponibles):
+        filtros_activos.append(f"División: {', '.join(map(str, division_seleccionada))}")
+    
+    if filtros_activos:
+        st.info(f"🔍 **Filtros activos:** {' | '.join(filtros_activos)}")
+    
+    st.markdown("---")
+    
+    # Verificar que hay datos después del filtro
+    if len(df_filtered) == 0:
+        st.warning("⚠️ No hay datos que coincidan con los filtros seleccionados. Por favor, ajusta los filtros.")
+    else:
+        # Calcular métricas con datos filtrados
+        if df_filtered.shape[1] > 33:
+            perc_gen = calc_pos(df_filtered.iloc[:, 33])
+            col_metric1, col_metric2, col_metric3 = st.columns(3)
+            with col_metric1:
+                st.metric(
+                    label="SATISFACCIÓN GENERAL", 
+                    value=f"{perc_gen:.1f}%",
+                    help="Porcentaje de respuestas con notas 6 y 7"
+                )
+            with col_metric2:
+                st.metric(
+                    label="TOTAL RESPUESTAS", 
+                    value=f"{len(df_filtered):,}"
+                )
+            with col_metric3:
+                promedio = df_filtered.iloc[:, 33].mean()
+                st.metric(
+                    label="PROMEDIO GENERAL", 
+                    value=f"{promedio:.2f}"
+                )
+        
+        st.markdown("---")
+        
+        # --- MODO COMPARATIVO POR EDADES ---
+        if modo_comparativo and col_edad:
+            st.subheader("📊 Análisis Comparativo por Grupos de Edad")
+            
+            # Calcular métricas por edad
+            edades_comparar = df_filtered[col_edad].dropna().unique()
+            
+            if len(edades_comparar) > 0:
+                # Comparación de Satisfacción General
+                satisfaccion_por_edad = {}
+                for edad in edades_comparar:
+                    df_edad = df_filtered[df_filtered[col_edad] == edad]
+                    if len(df_edad) > 0 and df_edad.shape[1] > 33:
+                        satisfaccion_por_edad[edad] = calc_pos(df_edad.iloc[:, 33])
+                
+                # Gráfico de comparación general
+                fig_comp_general = px.bar(
+                    x=list(satisfaccion_por_edad.keys()),
+                    y=list(satisfaccion_por_edad.values()),
+                    title="Satisfacción General por Grupo de Edad",
+                    labels={'x': 'Edad', 'y': '% Satisfacción (Notas 6-7)'},
+                    color=list(satisfaccion_por_edad.values()),
+                    color_continuous_scale='RdYlGn'
+                )
+                st.plotly_chart(fig_comp_general, use_container_width=True)
+                
+                # Comparación de contenidos por edad
+                st.subheader("Comparación de Contenidos por Edad")
+                cont_labels = ["Obj. Estratégicos", "Clientes", "Des. Prof.", "Bienestar", 
+                              "Compromiso", "Colaboración", "Comportamiento", "Orgullo"]
+                
+                fig_comp_cont = go.Figure()
+                for edad in edades_comparar:
+                    df_edad = df_filtered[df_filtered[col_edad] == edad]
+                    if len(df_edad) > 0 and df_edad.shape[1] > 7:
+                        cont_vals_edad = [calc_pos(df_edad.iloc[:, i]) for i in range(0, 8)]
+                        fig_comp_cont.add_trace(go.Bar(
+                            name=str(edad),
+                            x=cont_labels,
+                            y=cont_vals_edad
+                        ))
+                
+                fig_comp_cont.update_layout(
+                    title="Relevancia de Contenidos por Grupo de Edad",
+                    barmode='group',
+                    xaxis_title="Contenido",
+                    yaxis_title="% Positividad"
+                )
+                st.plotly_chart(fig_comp_cont, use_container_width=True)
+                
+                # Comparación de canales por edad
+                st.subheader("Comparación de Canales por Edad")
+                can_labels = ["Intranet", "Correos", "Streaming", "Teams", "Pantallas"]
+                
+                fig_comp_can = go.Figure()
+                for edad in edades_comparar:
+                    df_edad = df_filtered[df_filtered[col_edad] == edad]
+                    if len(df_edad) > 0 and df_edad.shape[1] > 12:
+                        can_vals_edad = [calc_pos(df_edad.iloc[:, i]) for i in range(8, 13)]
+                        fig_comp_can.add_trace(go.Bar(
+                            name=str(edad),
+                            x=can_labels,
+                            y=can_vals_edad
+                        ))
+                
+                fig_comp_can.update_layout(
+                    title="Valoración de Canales por Grupo de Edad",
+                    barmode='group',
+                    xaxis_title="Canal",
+                    yaxis_title="% Positividad"
+                )
+                st.plotly_chart(fig_comp_can, use_container_width=True)
+                
+                # Radar comparativo de atributos
+                st.subheader("Comparación de Atributos por Edad")
+                attr_labels = ["Oportunidad", "Utilidad", "Claridad", "Creatividad", "Frecuencia"]
+                
+                fig_radar_comp = go.Figure()
+                for edad in edades_comparar:
+                    df_edad = df_filtered[df_filtered[col_edad] == edad]
+                    if len(df_edad) > 0 and df_edad.shape[1] > 32:
+                        attr_vals_edad = [calc_pos(df_edad.iloc[:, i]) for i in range(28, 33)]
+                        fig_radar_comp.add_trace(go.Scatterpolar(
+                            r=attr_vals_edad,
+                            theta=attr_labels,
+                            fill='toself',
+                            name=str(edad)
+                        ))
+                
+                fig_radar_comp.update_layout(
+                    polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+                    title="Perfil de Atributos por Grupo de Edad"
+                )
+                st.plotly_chart(fig_radar_comp, use_container_width=True)
+            
+            st.markdown("---")
+        
+        # --- COLUMNAS DEMOGRÁFICAS ---
+        st.subheader("👥 Perfil Demográfico")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if col_edad:
+                fig_edad = px.pie(
+                    df_filtered, 
+                    names=col_edad, 
+                    title="Distribución por Edad", 
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.sequential.Blues_r
+                )
+                fig_edad.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_edad, use_container_width=True)
+        
+        with col2:
+            if col_region:
+                fig_region = px.pie(
+                    df_filtered, 
+                    names=col_region, 
+                    title="Distribución por Región", 
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.sequential.Greens_r
+                )
+                fig_region.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_region, use_container_width=True)
+        
+        with col3:
+            if col_division:
+                fig_div = px.pie(
+                    df_filtered, 
+                    names=col_division, 
+                    title="Distribución por División", 
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.sequential.Oranges_r
+                )
+                fig_div.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_div, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # --- CONTENIDOS Y CANALES ---
+        st.subheader("📢 Evaluación de Contenidos y Canales")
+        col_cont, col_can = st.columns(2)
+        
+        cont_vals = []
+        can_vals = []
+        
+        with col_cont:
+            if df_filtered.shape[1] > 7:
+                cont_vals = [calc_pos(df_filtered.iloc[:, i]) for i in range(0, 8)]
+                cont_labels = [
+                    "Obj. Estratégicos", "Clientes", "Des. Prof.", "Bienestar", 
+                    "Compromiso", "Colaboración", "Comportamiento", "Orgullo"
+                ]
+                fig_cont = px.bar(
+                    x=cont_labels, 
+                    y=cont_vals, 
+                    title="Relevancia de Contenidos (% Notas 6-7)",
+                    labels={'x': 'Contenido', 'y': '% Positividad'},
+                    color=cont_vals,
+                    color_continuous_scale='Blues'
+                )
+                fig_cont.update_layout(showlegend=False)
+                fig_cont.add_hline(y=perc_gen, line_dash="dash", line_color="red", 
+                                  annotation_text="Promedio General")
+                st.plotly_chart(fig_cont, use_container_width=True)
+        
+        with col_can:
+            if df_filtered.shape[1] > 12:
+                can_vals = [calc_pos(df_filtered.iloc[:, i]) for i in range(8, 13)]
+                can_labels = ["Intranet", "Correos", "Streaming", "Teams", "Pantallas"]
+                fig_can = px.bar(
+                    x=can_labels, 
+                    y=can_vals, 
+                    title="Valoración de Canales (% Notas 6-7)",
+                    labels={'x': 'Canal', 'y': '% Positividad'},
+                    color=can_vals,
+                    color_continuous_scale='Oranges'
+                )
+                fig_can.update_layout(showlegend=False)
+                fig_can.add_hline(y=perc_gen, line_dash="dash", line_color="red",
+                                 annotation_text="Promedio General")
+                st.plotly_chart(fig_can, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # --- TABLAS DE FRECUENCIA ---
+        st.subheader("📌 Recordación y Temas de Interés")
+        c_rec, c_fut = st.columns(2)
+        
+        with c_rec:
+            if df_filtered.shape[1] > 22:
+                st.markdown("**Recordación de Temas Recientes**")
+                rec_freq = df_filtered.iloc[:, 13:23].stack().value_counts(normalize=True).mul(100).round(1)
+                rec_freq_df = pd.DataFrame({
+                    'Tema': rec_freq.index,
+                    'Frecuencia (%)': rec_freq.values
+                })
+                st.dataframe(rec_freq_df, use_container_width=True, hide_index=True)
+        
+        with c_fut:
+            if df_filtered.shape[1] > 27:
+                st.markdown("**Temas de Interés Futuro**")
+                fut_freq = df_filtered.iloc[:, 25:28].stack().value_counts(normalize=True).mul(100).round(1)
+                fut_freq_df = pd.DataFrame({
+                    'Tema': fut_freq.index,
+                    'Frecuencia (%)': fut_freq.values
+                })
+                st.dataframe(fut_freq_df, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        
+        # --- ATRIBUTOS ---
+        st.subheader("✨ Atributos de la Comunicación Interna")
+        
+        attr_vals = []
+        if df_filtered.shape[1] > 32:
+            attr_vals = [calc_pos(df_filtered.iloc[:, i]) for i in range(28, 33)]
+            attr_labels = ["Oportunidad", "Utilidad", "Claridad", "Creatividad", "Frecuencia"]
+            
+            col_radar, col_bar = st.columns([1, 1])
+            
+            with col_radar:
+                fig_attr = go.Figure()
+                fig_attr.add_trace(go.Scatterpolar(
+                    r=attr_vals,
+                    theta=attr_labels,
+                    fill='toself',
+                    name='Atributos',
+                    line_color='rgb(0, 123, 255)'
+                ))
+                fig_attr.update_layout(
+                    polar=dict(
+                        radialaxis=dict(
+                            visible=True,
+                            range=[0, 100]
+                        )
+                    ),
+                    title="Perfil de Atributos (Radar)",
+                    showlegend=False
+                )
+                st.plotly_chart(fig_attr, use_container_width=True)
+            
+            with col_bar:
+                fig_attr_bar = px.bar(
+                    x=attr_labels,
+                    y=attr_vals,
+                    title="Perfil de Atributos (Barras)",
+                    labels={'x': 'Atributo', 'y': '% Positividad'},
+                    color=attr_vals,
+                    color_continuous_scale='Viridis'
+                )
+                fig_attr_bar.update_layout(showlegend=False)
+                st.plotly_chart(fig_attr_bar, use_container_width=True)
+        
+        # --- EXPORTAR REPORTE ---
+        st.markdown("---")
+        st.subheader("📄 Exportar Reporte")
+        
+        col_export1, col_export2 = st.columns(2)
+        
+        with col_export1:
+            if st.button("📥 Descargar Reporte HTML", use_container_width=True):
+                html_content = create_export_html(df_filtered, perc_gen, cont_vals, can_vals, attr_vals)
+                b64 = base64.b64encode(html_content.encode()).decode()
+                href = f'<a href="data:text/html;base64,{b64}" download="reporte_ccii_2025.html">Haz clic aquí si la descarga no inicia automáticamente</a>'
+                st.markdown(href, unsafe_allow_html=True)
+                st.success("✅ Reporte generado correctamente")
+        
+        with col_export2:
+            if st.button("📊 Descargar Datos Filtrados (CSV)", use_container_width=True):
+                csv = df_filtered.to_csv(index=False, sep=';').encode('utf-8')
+                st.download_button(
+                    label="📥 Descargar CSV",
+                    data=csv,
+                    file_name="datos_filtrados_ccii_2025.csv",
+                    mime="text/csv"
+                )
+        
+        # --- FOOTER ---
+        st.markdown("---")
+        st.caption("📊 Dashboard de Comunicación Interna | Datos actualizados 2025")
+
+else:
+    st.warning("⚠️ Por favor, asegúrate de que el archivo 'Encuesta_CCII_2025.csv' esté en el directorio correcto.")
